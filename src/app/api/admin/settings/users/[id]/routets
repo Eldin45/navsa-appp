@@ -1,0 +1,138 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { getCurrentUser } from "~/lib/session";
+import { prisma } from "~/lib/db";
+
+export const dynamic = "force-dynamic";
+
+const patchSchema = z.object({
+  status: z.enum(["ACTIVE", "SUSPENDED", "INACTIVE"]).optional(),
+});
+
+async function assertCanManage(
+  callerId: string,
+  callerRole: string,
+  callerOrgId: string | null,
+  targetId: string
+) {
+  const target = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: { id: true, role: true, organizationId: true },
+  });
+  if (!target) throw new Error("User not found");
+
+  if (callerRole === "SUPER_ADMIN") return target;
+
+  if (callerRole === "ADMIN") {
+    if (!callerOrgId || target.organizationId !== callerOrgId) {
+      throw new Error("Forbidden");
+    }
+    if (target.role === "SUPER_ADMIN" || target.role === "ADMIN") {
+      throw new Error("Admins cannot manage other admins");
+    }
+    return target;
+  }
+
+  throw new Error("Forbidden");
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> | { id: string } }
+) {
+  const caller = await getCurrentUser();
+  if (!caller || !["ADMIN", "SUPER_ADMIN"].includes(caller.role)) {
+    return NextResponse.json(
+      { success: false, error: "Forbidden" },
+      { status: 403 }
+    );
+  }
+
+  try {
+    const { id } = await params;
+    if (id === caller.id) {
+      return NextResponse.json(
+        { success: false, error: "You cannot modify your own status" },
+        { status: 400 }
+      );
+    }
+
+    await assertCanManage(caller.id, caller.role, caller.organizationId ?? null, id);
+
+    const body = await req.json();
+    const data = patchSchema.parse(body);
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(data.status ? { status: data.status } : {}),
+      },
+      select: { id: true, status: true },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: caller.id,
+        action: "UPDATE_USER_STATUS",
+        entity_type: "USER",
+        entity_id: id,
+        new_values: JSON.stringify(data),
+        success: true,
+      },
+    });
+
+    return NextResponse.json({ success: true, data: updated });
+  } catch (err: any) {
+    const status = err.message === "Forbidden" ? 403 : 400;
+    return NextResponse.json(
+      { success: false, error: err.message || "Failed to update" },
+      { status }
+    );
+  }
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> | { id: string } }
+) {
+  const caller = await getCurrentUser();
+  if (!caller || !["ADMIN", "SUPER_ADMIN"].includes(caller.role)) {
+    return NextResponse.json(
+      { success: false, error: "Forbidden" },
+      { status: 403 }
+    );
+  }
+
+  try {
+    const { id } = await params;
+    if (id === caller.id) {
+      return NextResponse.json(
+        { success: false, error: "You cannot delete yourself" },
+        { status: 400 }
+      );
+    }
+
+    await assertCanManage(caller.id, caller.role, caller.organizationId ?? null, id);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.delete({ where: { id } });
+      await tx.auditLog.create({
+        data: {
+          userId: caller.id,
+          action: "DELETE_USER",
+          entity_type: "USER",
+          entity_id: id,
+          success: true,
+        },
+      });
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (err: any) {
+    const status = err.message === "Forbidden" ? 403 : 400;
+    return NextResponse.json(
+      { success: false, error: err.message || "Failed to delete" },
+      { status }
+    );
+  }
+}
