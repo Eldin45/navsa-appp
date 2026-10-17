@@ -87,7 +87,7 @@ export const resolveDashboardForRole = (role: string): string => {
   switch (r) {
     case "SUPER_ADMIN":
     case "PLATFORM_ADMIN":
-      return "/admin/dashboard";
+      return "/admin";
     case "ADMIN":
     case "ORG_ADMIN":
     case "SUPPLIER":

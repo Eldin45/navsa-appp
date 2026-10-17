@@ -61,7 +61,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     router.prefetch(callbackUrl);
-    router.prefetch("/admin/dashboard");
+    router.prefetch("/admin");
     router.prefetch("/dashboard");
     router.prefetch("/change-password");
   }, [router, callbackUrl]);
@@ -112,7 +112,7 @@ const routeAfterAuth = async (fallback: string = callbackUrl) => {
   switch (role) {
     case "SUPER_ADMIN":
     case "PLATFORM_ADMIN":
-      router.push("/admin/dashboard");
+      router.push("/admin");
       return;
     case "ADMIN":
     case "ORG_ADMIN":
