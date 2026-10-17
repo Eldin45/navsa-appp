@@ -87,10 +87,6 @@ function normalizeRole(raw: unknown): string {
 
 const REFRESH_INTERVAL_MS = 15 * 1000;
 
-/**
- * Resolve the secret from either env var name so the app works
- * whether the deployment uses NEXTAUTH_SECRET (v4) or AUTH_SECRET (v5 naming).
- */
 const AUTH_SECRET =
   process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
 
@@ -177,7 +173,6 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, user, trigger, session }) {
-      // 1. Initial sign-in
       if (user) {
         token.id = user.id;
         token.email = user.email;
@@ -192,7 +187,6 @@ export const authOptions: NextAuthOptions = {
         return token;
       }
 
-      // 2. Manual session update
       if (trigger === "update" && session) {
         if (typeof (session as any).mustChangePassword === "boolean") {
           token.mustChangePassword = (session as any).mustChangePassword;
@@ -200,7 +194,6 @@ export const authOptions: NextAuthOptions = {
         token.refreshedAt = 0;
       }
 
-      // 3. Periodic DB refresh
       const stale =
         !token.refreshedAt ||
         Date.now() - token.refreshedAt > REFRESH_INTERVAL_MS;
@@ -251,11 +244,33 @@ export const authOptions: NextAuthOptions = {
       }
       return session;
     },
+
+    // ✅ FIX: strip callbackUrl from the final redirect URL.
+    //    This is what breaks the redirect loop after successful login.
+    async redirect({ url, baseUrl }) {
+      try {
+        const parsed = new URL(url, baseUrl);
+
+        // Remove the loop-causing parameter
+        parsed.searchParams.delete("callbackUrl");
+
+        // Same-origin → allowed
+        if (parsed.origin === baseUrl) {
+          return parsed.toString();
+        }
+
+        // Relative URL passed in (e.g. "/admin")
+        if (url.startsWith("/")) {
+          return `${baseUrl}${parsed.pathname}${parsed.search}`;
+        }
+
+        return baseUrl;
+      } catch {
+        return baseUrl;
+      }
+    },
   },
   session: { strategy: "jwt" },
-
-  // ✅ FIX: use NEXTAUTH_SECRET as primary, fall back to AUTH_SECRET.
   secret: AUTH_SECRET,
-
   pages: { signIn: "/" },
 };

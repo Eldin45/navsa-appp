@@ -83,11 +83,29 @@ function roleCanAccessDashboard(pathname: string, role: string): boolean {
 }
 
 // ============================================================
-// SECRET — single source of truth for middleware
+// SECRET
 // ============================================================
 
 const AUTH_SECRET =
   process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
+
+// ============================================================
+// TOKEN READER — explicit cookie name for Vercel HTTPS
+// ============================================================
+
+async function readToken(req: NextRequest) {
+  const isProd = process.env.NODE_ENV === "production";
+  const cookieName = isProd
+    ? "__Secure-next-auth.session-token"
+    : "next-auth.session-token";
+
+  return getToken({
+    req,
+    secret: AUTH_SECRET,
+    cookieName,
+    secureCookie: isProd,
+  });
+}
 
 // ============================================================
 // MIDDLEWARE
@@ -106,47 +124,54 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Public paths
+  // ============================================================
+  // 2. SAFETY VALVE — break the callbackUrl loop.
+  //
+  //    If the user is landing on "/" with ?callbackUrl=... AND we
+  //    can now read a valid token, send them straight to the
+  //    destination WITHOUT the callbackUrl param. This prevents
+  //    the loop even if the login page bounces them back.
+  // ============================================================
+  if (
+    pathname === "/" &&
+    req.nextUrl.searchParams.has("callbackUrl")
+  ) {
+    const token = await readToken(req);
+    if (token) {
+      const callbackUrl =
+        req.nextUrl.searchParams.get("callbackUrl") || "/dashboard";
+      // Ensure it's a relative path to avoid open-redirect
+      const safePath = callbackUrl.startsWith("/")
+        ? callbackUrl
+        : "/dashboard";
+      return NextResponse.redirect(new URL(safePath, req.url));
+    }
+  }
+
+  // 3. Public paths
   if (isPublic(pathname)) {
     return NextResponse.next();
   }
 
-  // 3. Only gate /dashboard/* and /admin/*
+  // 4. Only gate /dashboard/* and /admin/*
   const isDashboard = pathname.startsWith("/dashboard");
   const isAdmin = pathname.startsWith("/admin");
   if (!isDashboard && !isAdmin) {
     return NextResponse.next();
   }
 
-  // 4. Read token with explicit cookie name for production HTTPS
-  const isProd = process.env.NODE_ENV === "production";
-  const cookieName = isProd
-    ? "__Secure-next-auth.session-token"
-    : "next-auth.session-token";
-
-  const token = await getToken({
-    req,
-    secret: AUTH_SECRET,
-    cookieName,
-    secureCookie: isProd,
-  });
+  // 5. Read token
+  const token = await readToken(req);
 
   // Debug — remove after confirmed working
   console.log("[MW]", {
     path: pathname,
     hasToken: !!token,
     role: token?.role,
-    cookieName,
-    secureCookie: isProd,
-    sessionCookies: req.cookies
-      .getAll()
-      .map((c) => c.name)
-      .filter((n) => n.includes("session")),
     hasSecret: !!AUTH_SECRET,
-    hasUrl: process.env.NEXTAUTH_URL,
   });
 
-  // 5. No token → back to sign-in
+  // 6. No token → back to sign-in (with callbackUrl)
   if (!token) {
     const loginUrl = new URL("/", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
@@ -167,7 +192,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/unauthorized", req.url));
   }
 
-  // 6. /admin/* — SUPER_ADMIN and PLATFORM_ADMIN only
+  // 7. /admin/* — SUPER_ADMIN and PLATFORM_ADMIN only
   if (isAdmin) {
     if (role !== "SUPER_ADMIN" && role !== "PLATFORM_ADMIN") {
       return NextResponse.redirect(new URL("/unauthorized", req.url));
@@ -175,7 +200,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 7. /dashboard/* — role-scoped (platform admins can view)
+  // 8. /dashboard/* — role-scoped
   if (isDashboard) {
     if (role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN") {
       return NextResponse.next();
@@ -190,5 +215,9 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/admin/:path*"],
+  matcher: [
+    "/",
+    "/dashboard/:path*",
+    "/admin/:path*",
+  ],
 };
