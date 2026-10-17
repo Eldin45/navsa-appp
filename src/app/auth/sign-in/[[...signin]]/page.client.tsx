@@ -66,6 +66,34 @@ export default function LoginPage() {
     router.prefetch("/change-password");
   }, [router, callbackUrl]);
 
+  // ============================================================
+  // CLEANUP: if we land on "/" with ?callbackUrl=... and the user
+  // is already signed in, jump straight to the destination with
+  // no query string. This kills the callbackUrl loop even if the
+  // server-side redirect misbehaves.
+  // ============================================================
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const url = new URL(window.location.href);
+    if (url.pathname !== "/") return;
+    if (!url.searchParams.has("callbackUrl")) return;
+
+    let cancelled = false;
+    getSession().then((session) => {
+      if (cancelled) return;
+      if (!session?.user) return;
+
+      const cb = url.searchParams.get("callbackUrl") || "/dashboard";
+      const safe = cb.startsWith("/") ? cb : "/dashboard";
+      window.location.replace(safe);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     const remembered = localStorage.getItem("navsa_remember_email");
     if (remembered) {
@@ -84,47 +112,53 @@ export default function LoginPage() {
 
   // ============================================================
   // POST-AUTH ROUTING
+  // Uses window.location.href (hard nav) so the session cookie is
+  // guaranteed to be sent with the /admin or /dashboard request.
   // ============================================================
-const routeAfterAuth = async (fallback: string = callbackUrl) => {
-  const session = await getSession();
+  const routeAfterAuth = async (fallback: string = callbackUrl) => {
+    const session = await getSession();
 
-  if (!session?.user) {
-    router.push(fallback);
-    return;
-  }
-
-  const role = String((session.user as any).role ?? "").toUpperCase();
-  const status = (session.user as any).status;
-  const mustChangePassword = (session.user as any).mustChangePassword;
-
-  console.log("🔄 [LOGIN] routeAfterAuth:", { role, status, mustChangePassword });
-
-  if (status === "PENDING_VERIFICATION") {
-    router.push("/pending-verification");
-    return;
-  }
-
-  if (mustChangePassword) {
-    router.push("/change-password");
-    return;
-  }
-
-  switch (role) {
-    case "SUPER_ADMIN":
-    case "PLATFORM_ADMIN":
-      router.push("/admin");
+    if (!session?.user) {
+      window.location.href = fallback;
       return;
-    case "ADMIN":
-    case "ORG_ADMIN":
-    case "SUPPLIER":
-    case "FARMER":
-      router.push("/dashboard");
+    }
+
+    const role = String((session.user as any).role ?? "").toUpperCase();
+    const status = (session.user as any).status;
+    const mustChangePassword = (session.user as any).mustChangePassword;
+
+    console.log("🔄 [LOGIN] routeAfterAuth:", {
+      role,
+      status,
+      mustChangePassword,
+    });
+
+    if (status === "PENDING_VERIFICATION") {
+      window.location.href = "/pending-verification";
       return;
-    default:
-      router.push(fallback || "/dashboard");
+    }
+
+    if (mustChangePassword) {
+      window.location.href = "/change-password";
       return;
-  }
-};
+    }
+
+    switch (role) {
+      case "SUPER_ADMIN":
+      case "PLATFORM_ADMIN":
+        window.location.href = "/admin";
+        return;
+      case "ADMIN":
+      case "ORG_ADMIN":
+      case "SUPPLIER":
+      case "FARMER":
+        window.location.href = "/dashboard";
+        return;
+      default:
+        window.location.href = fallback || "/dashboard";
+        return;
+    }
+  };
 
   // ============================================================
   // SIGN IN
@@ -556,13 +590,6 @@ const routeAfterAuth = async (fallback: string = callbackUrl) => {
                   Submit an application
                 </Link>{" "}
                 to be reviewed.
-              </span>
-            </div>
-            <div className="flex items-start gap-2 text-gray-600">
-              <Building2 className="h-4 w-4 mt-0.5 text-gray-400" />
-              <span>
-                <strong>Admin / Farmer?</strong> Accounts are created by your
-                organization.
               </span>
             </div>
           </div>

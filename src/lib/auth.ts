@@ -245,25 +245,19 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
 
-    // ✅ FIX: strip callbackUrl from the final redirect URL.
-    //    This is what breaks the redirect loop after successful login.
+    // ✅ Strip callbackUrl from the final redirect URL.
+    //    This is what breaks the loop after a successful login.
     async redirect({ url, baseUrl }) {
       try {
         const parsed = new URL(url, baseUrl);
-
-        // Remove the loop-causing parameter
         parsed.searchParams.delete("callbackUrl");
 
-        // Same-origin → allowed
         if (parsed.origin === baseUrl) {
           return parsed.toString();
         }
-
-        // Relative URL passed in (e.g. "/admin")
         if (url.startsWith("/")) {
           return `${baseUrl}${parsed.pathname}${parsed.search}`;
         }
-
         return baseUrl;
       } catch {
         return baseUrl;
