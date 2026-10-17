@@ -16,5 +16,5 @@ docker-compose.yml
 docker-compose.yml
 docker-compnose.yml
 src
-public
+.gitignore
 
