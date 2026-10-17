@@ -72,7 +72,6 @@ declare module "next-auth/jwt" {
       palmPayAccountName: string | null;
       palmPayStatus: string | null;
     }[];
-    /** Milliseconds timestamp when the DB-sourced fields were last refreshed. */
     refreshedAt?: number;
   }
 }
@@ -86,12 +85,14 @@ function normalizeRole(raw: unknown): string {
   return String(raw).trim().toUpperCase();
 }
 
-/**
- * How long (ms) before we re-read role / status / mustChangePassword /
- * wallets from the DB. Keeps the JWT mostly stateless but guarantees
- * fresh flags within ~15s of any DB change.
- */
 const REFRESH_INTERVAL_MS = 15 * 1000;
+
+/**
+ * Resolve the secret from either env var name so the app works
+ * whether the deployment uses NEXTAUTH_SECRET (v4) or AUTH_SECRET (v5 naming).
+ */
+const AUTH_SECRET =
+  process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
 
 // ============================================================
 // AUTH OPTIONS
@@ -146,7 +147,6 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        // Fire-and-forget
         prisma.user
           .update({ where: { id: user.id }, data: { last_login: new Date() } })
           .catch(() => {});
@@ -177,7 +177,7 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, user, trigger, session }) {
-      // 1. Initial sign-in — populate everything from the freshly-authorized user.
+      // 1. Initial sign-in
       if (user) {
         token.id = user.id;
         token.email = user.email;
@@ -192,19 +192,15 @@ export const authOptions: NextAuthOptions = {
         return token;
       }
 
-      // 2. Manual session update (`useSession().update(...)`).
+      // 2. Manual session update
       if (trigger === "update" && session) {
-        // Allow the client to flip mustChangePassword after a successful change.
         if (typeof (session as any).mustChangePassword === "boolean") {
           token.mustChangePassword = (session as any).mustChangePassword;
         }
-        // Force a DB re-fetch on next request.
         token.refreshedAt = 0;
       }
 
-      // 3. Periodic DB refresh — every REFRESH_INTERVAL_MS the token's
-      //    volatile fields are re-read so password changes and status
-      //    updates take effect without re-signing in.
+      // 3. Periodic DB refresh
       const stale =
         !token.refreshedAt ||
         Date.now() - token.refreshedAt > REFRESH_INTERVAL_MS;
@@ -233,7 +229,6 @@ export const authOptions: NextAuthOptions = {
           }
           token.refreshedAt = Date.now();
         } catch (err) {
-          // Don't blow up the request if the DB hiccups; just retry next time.
           console.error("[JWT refresh] failed:", err);
           token.refreshedAt = Date.now() - REFRESH_INTERVAL_MS + 5000;
         }
@@ -258,6 +253,9 @@ export const authOptions: NextAuthOptions = {
     },
   },
   session: { strategy: "jwt" },
-  secret: process.env.AUTH_SECRET,
+
+  // ✅ FIX: use NEXTAUTH_SECRET as primary, fall back to AUTH_SECRET.
+  secret: AUTH_SECRET,
+
   pages: { signIn: "/" },
 };

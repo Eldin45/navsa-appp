@@ -3,7 +3,7 @@ import { withAuth } from "next-auth/middleware";
 import { NextResponse, type NextRequest } from "next/server";
 
 // ============================================================
-// PUBLIC / SHARED PATH GROUPS
+// CONFIG
 // ============================================================
 
 const PUBLIC_PATHS = [
@@ -83,7 +83,14 @@ function roleCanAccessDashboard(pathname: string, role: string): boolean {
 }
 
 // ============================================================
-// MIDDLEWARE — wrapped with withAuth (matches reference project)
+// SECRET — single source of truth for middleware
+// ============================================================
+
+const AUTH_SECRET =
+  process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
+
+// ============================================================
+// MIDDLEWARE
 // ============================================================
 
 export default withAuth(
@@ -91,7 +98,20 @@ export default withAuth(
     const { pathname } = req.nextUrl;
     const token = req.nextauth?.token;
 
-    // 1. Skip static assets
+    // Debug log — remove after confirmed working
+    console.log("[MW]", {
+      path: pathname,
+      hasToken: !!token,
+      role: token?.role,
+      cookieNames: req.cookies
+        .getAll()
+        .map((c) => c.name)
+        .filter((n) => n.includes("session")),
+      hasSecret: !!AUTH_SECRET,
+      hasUrl: process.env.NEXTAUTH_URL,
+    });
+
+    // 1. Static assets
     if (
       pathname.startsWith("/_next") ||
       pathname.startsWith("/static") ||
@@ -113,14 +133,14 @@ export default withAuth(
       return NextResponse.next();
     }
 
-    // 4. No token → redirect to sign-in with callback
+    // 4. No token → back to sign-in
     if (!token) {
       const loginUrl = new URL("/", req.url);
       loginUrl.searchParams.set("callbackUrl", pathname);
       return NextResponse.redirect(loginUrl);
     }
 
-    const role = (token.role as string) ?? "";
+    const role = String(token.role ?? "").toUpperCase();
     const knownRoles = [
       "SUPER_ADMIN",
       "PLATFORM_ADMIN",
@@ -142,7 +162,7 @@ export default withAuth(
       return NextResponse.next();
     }
 
-    // 6. /dashboard/* — role-scoped (platform admins can view)
+    // 6. /dashboard/* — role-scoped
     if (isDashboard) {
       if (role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN") {
         return NextResponse.next();
@@ -156,11 +176,10 @@ export default withAuth(
     return NextResponse.next();
   },
   {
+    // ✅ FIX: explicit secret + pages.signIn so withAuth works in production
+    secret: AUTH_SECRET,
     callbacks: {
-      authorized: ({ token }) => {
-        // Always return true so the middleware above handles all redirects
-        return true;
-      },
+      authorized: () => true,
     },
     pages: {
       signIn: "/",
