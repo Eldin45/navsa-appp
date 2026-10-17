@@ -1,6 +1,6 @@
 // src/middleware.ts
-import { withAuth } from "next-auth/middleware";
 import { NextResponse, type NextRequest } from "next/server";
+import { getToken } from "next-auth/jwt";
 
 // ============================================================
 // CONFIG
@@ -93,99 +93,101 @@ const AUTH_SECRET =
 // MIDDLEWARE
 // ============================================================
 
-export default withAuth(
-  async function middleware(req: NextRequest) {
-    const { pathname } = req.nextUrl;
-    const token = req.nextauth?.token;
+export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
 
-    // Debug log — remove after confirmed working
-    console.log("[MW]", {
-      path: pathname,
-      hasToken: !!token,
-      role: token?.role,
-      cookieNames: req.cookies
-        .getAll()
-        .map((c) => c.name)
-        .filter((n) => n.includes("session")),
-      hasSecret: !!AUTH_SECRET,
-      hasUrl: process.env.NEXTAUTH_URL,
-    });
+  // 1. Static assets
+  if (
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/static") ||
+    pathname.startsWith("/public") ||
+    pathname.match(/\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|woff2?)$/)
+  ) {
+    return NextResponse.next();
+  }
 
-    // 1. Static assets
-    if (
-      pathname.startsWith("/_next") ||
-      pathname.startsWith("/static") ||
-      pathname.startsWith("/public") ||
-      pathname.match(/\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|woff2?)$/)
-    ) {
-      return NextResponse.next();
-    }
+  // 2. Public paths
+  if (isPublic(pathname)) {
+    return NextResponse.next();
+  }
 
-    // 2. Public paths
-    if (isPublic(pathname)) {
-      return NextResponse.next();
-    }
+  // 3. Only gate /dashboard/* and /admin/*
+  const isDashboard = pathname.startsWith("/dashboard");
+  const isAdmin = pathname.startsWith("/admin");
+  if (!isDashboard && !isAdmin) {
+    return NextResponse.next();
+  }
 
-    // 3. Only gate /dashboard/* and /admin/*
-    const isDashboard = pathname.startsWith("/dashboard");
-    const isAdmin = pathname.startsWith("/admin");
-    if (!isDashboard && !isAdmin) {
-      return NextResponse.next();
-    }
+  // 4. Read token with explicit cookie name for production HTTPS
+  const isProd = process.env.NODE_ENV === "production";
+  const cookieName = isProd
+    ? "__Secure-next-auth.session-token"
+    : "next-auth.session-token";
 
-    // 4. No token → back to sign-in
-    if (!token) {
-      const loginUrl = new URL("/", req.url);
-      loginUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(loginUrl);
-    }
+  const token = await getToken({
+    req,
+    secret: AUTH_SECRET,
+    cookieName,
+    secureCookie: isProd,
+  });
 
-    const role = String(token.role ?? "").toUpperCase();
-    const knownRoles = [
-      "SUPER_ADMIN",
-      "PLATFORM_ADMIN",
-      "ADMIN",
-      "ORG_ADMIN",
-      "FARMER",
-      "SUPPLIER",
-    ];
+  // Debug — remove after confirmed working
+  console.log("[MW]", {
+    path: pathname,
+    hasToken: !!token,
+    role: token?.role,
+    cookieName,
+    secureCookie: isProd,
+    sessionCookies: req.cookies
+      .getAll()
+      .map((c) => c.name)
+      .filter((n) => n.includes("session")),
+    hasSecret: !!AUTH_SECRET,
+    hasUrl: process.env.NEXTAUTH_URL,
+  });
 
-    if (!knownRoles.includes(role)) {
+  // 5. No token → back to sign-in
+  if (!token) {
+    const loginUrl = new URL("/", req.url);
+    loginUrl.searchParams.set("callbackUrl", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  const role = String(token.role ?? "").toUpperCase();
+  const knownRoles = [
+    "SUPER_ADMIN",
+    "PLATFORM_ADMIN",
+    "ADMIN",
+    "ORG_ADMIN",
+    "FARMER",
+    "SUPPLIER",
+  ];
+
+  if (!knownRoles.includes(role)) {
+    return NextResponse.redirect(new URL("/unauthorized", req.url));
+  }
+
+  // 6. /admin/* — SUPER_ADMIN and PLATFORM_ADMIN only
+  if (isAdmin) {
+    if (role !== "SUPER_ADMIN" && role !== "PLATFORM_ADMIN") {
       return NextResponse.redirect(new URL("/unauthorized", req.url));
     }
-
-    // 5. /admin/* — SUPER_ADMIN and PLATFORM_ADMIN only
-    if (isAdmin) {
-      if (role !== "SUPER_ADMIN" && role !== "PLATFORM_ADMIN") {
-        return NextResponse.redirect(new URL("/unauthorized", req.url));
-      }
-      return NextResponse.next();
-    }
-
-    // 6. /dashboard/* — role-scoped
-    if (isDashboard) {
-      if (role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN") {
-        return NextResponse.next();
-      }
-      if (!roleCanAccessDashboard(pathname, role)) {
-        return NextResponse.redirect(new URL("/unauthorized", req.url));
-      }
-      return NextResponse.next();
-    }
-
     return NextResponse.next();
-  },
-  {
-    // ✅ FIX: explicit secret + pages.signIn so withAuth works in production
-    secret: AUTH_SECRET,
-    callbacks: {
-      authorized: () => true,
-    },
-    pages: {
-      signIn: "/",
-    },
   }
-);
+
+  // 7. /dashboard/* — role-scoped (platform admins can view)
+  if (isDashboard) {
+    if (role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN") {
+      return NextResponse.next();
+    }
+    if (!roleCanAccessDashboard(pathname, role)) {
+      return NextResponse.redirect(new URL("/unauthorized", req.url));
+    }
+    return NextResponse.next();
+  }
+
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: ["/dashboard/:path*", "/admin/:path*"],
