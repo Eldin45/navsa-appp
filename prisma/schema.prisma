@@ -1,0 +1,1442 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  ORG_ADMIN 
+  PLATFORM_ADMIN
+  FARMER
+  SUPPLIER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum OrganizationType {
+  COOPERATIVE
+  NGO
+  GOVERNMENT
+  AGGREGATOR
+  INPUT_SUPPLIER
+  FARM_MANAGEMENT
+}
+
+// ---------- WALLET ----------
+
+enum WalletType {
+  SUPER_ADMIN
+  ADMIN
+  FARMER_CLOSED
+  FARMER_OPEN
+  SUPPLIER
+}
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+  SUSPENDED
+}
+
+enum WalletTransactionType {
+  CREDIT
+  DEBIT
+  TRANSFER
+  FEE
+  REFUND
+  RESERVE
+  RELEASE
+  ADMIN_ADJUSTMENT
+  SYSTEM
+}
+
+enum WalletTransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum WalletCategory {
+  FUNDING
+  INPUT_PAYMENT
+  HARVEST_PAYOUT
+  WITHDRAWAL
+  TRANSFER
+  REFUND
+  FEE
+  ADMIN_ADJUSTMENT
+  SYSTEM
+}
+
+enum WalletFundingSource {
+  BANK_TRANSFER
+  CARD
+  USSD
+  ADMIN_ALLOCATION
+  PLATFORM_FUNDING
+  HARVEST_SETTLEMENT
+  MANUAL
+}
+
+enum WalletFundingStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+// ---------- DOMAIN ----------
+
+enum InputRequestStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  FUNDED
+  ORDERED
+  DELIVERED
+  CANCELLED
+}
+
+enum InputOrderStatus {
+  PENDING
+  ACCEPTED
+  PROCESSING
+  DISPATCHED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum IoTDeviceType {
+  // Sensors (read only)
+  SOIL_SENSOR
+  WEATHER_STATION
+  MOISTURE_PROBE
+  CAMERA
+  MULTI_SENSOR
+
+  // Actuators (controllable)
+  WATER_PUMP
+  VALVE
+  FAN
+  LIGHT
+  MOTOR
+  HEATER
+}
+
+enum IoTDeviceStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  OFFLINE
+}
+
+enum ActuatorMode {
+  MANUAL
+  AUTO
+  SCHEDULE
+}
+
+enum ActuatorState {
+  ON
+  OFF
+}
+
+enum ActuatorCommandSource {
+  MANUAL
+  AUTO
+  SCHEDULE
+  SAFETY
+}
+
+enum CropActivityType {
+  PLANTING
+  IRRIGATION
+  FERTILIZING
+  PEST_CONTROL
+  WEEDING
+  HARVESTING
+  OTHER
+}
+
+enum CycleStatus {
+  PLANNED
+  PLANTED
+  GROWING
+  HARVESTING
+  COMPLETED
+  FAILED
+}
+
+enum AIAdviceType {
+  IRRIGATION
+  FERTILIZER
+  PEST
+  DISEASE
+  PLANTING
+  HARVEST
+  GENERAL
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  MORE_INFO_REQUESTED
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// ============================================================
+// AUTH
+// ============================================================
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_account_user")
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_session_user")
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  id         String   @id @default(uuid())
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model PasswordReset {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_password_reset_user")
+
+  @@index([userId])
+  @@index([token])
+  @@map("password_resets")
+}
+
+// ============================================================
+// USER & ORGANIZATION
+// ============================================================
+
+model User {
+  id                   String     @id @default(uuid())
+  email                String     @unique
+  emailVerified        DateTime?
+  password_hash        String?
+  full_name            String
+  phone                String?
+  image                String?
+  role                 UserRole
+  status               UserStatus @default(ACTIVE)
+  organizationId       String?
+  createdById          String?
+  must_change_password Boolean    @default(false)
+
+  last_login           DateTime?
+  created_at           DateTime   @default(now())
+  updated_at           DateTime   @updatedAt
+
+  accounts             Account[]
+  sessions             Session[]
+  passwordResets       PasswordReset[]
+
+  farmerProfile        FarmerProfile?
+  supplierProfile      SupplierProfile?
+
+  wallets              Wallet[]
+  walletFundingsInitiated WalletFunding[]   @relation("WalletFundingInitiatedBy")
+  walletFundingsApproved  WalletFunding[]   @relation("WalletFundingApprovedBy")
+  walletTransactions   WalletTransaction[]
+  harvestPayoutsReceived HarvestPayout[]    @relation("PayoutFarmer")
+  harvestPayoutsMade   HarvestPayout[]      @relation("PayoutAdmin")
+
+  farms                Farm[]
+  farmGroupMemberships FarmGroupMember[]
+
+  devices              IoTDevice[]
+  aiAdvice             AIAgronomyAdvice[]
+  actuatorCommands     IoTActuatorCommand[]
+
+  inputRequests        InputRequest[] @relation("InputRequestFarmer")
+  approvedRequests     InputRequest[] @relation("InputRequestApprover")
+  fundedRequests       InputRequest[] @relation("InputRequestFunder")
+  inputOrders          InputOrder[]   @relation("InputOrderFarmer")
+  deliveredOrders      InputOrder[]   @relation("InputOrderDeliverer")
+
+  bankAccounts         BankAccount[]
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  preferences          UserPreferences?
+
+  createdUsers         User[]                @relation("UserCreatedUsers")
+  createdBy            User?                 @relation("UserCreatedUsers", fields: [createdById], references: [id], map: "fk_user_created_by")
+  invitedAdmins        AdminInvite[]         @relation("AdminInviteInvitedBy")
+  acceptedInvite       AdminInvite?          @relation("AdminInviteAcceptedBy")
+  reviewedApplications SupplierApplication[] @relation("SupplierApplicationReviewedBy")
+  approvedApplication  SupplierApplication?  @relation("SupplierApplicationApprovedUser")
+
+  organization         Organization? @relation(fields: [organizationId], references: [id], map: "fk_user_organization")
+
+  @@index([role])
+  @@index([status])
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Organization {
+  id                   String           @id @default(uuid())
+  name                 String
+  legal_name           String?
+  slug                 String           @unique
+  type                 OrganizationType
+  registration_number  String?          @unique
+  tax_id               String?
+  country              String           @default("NIGERIA")
+  region               String?
+  city                 String?
+  address              String?
+  phone                String?
+  email                String?
+  website              String?
+  logo_url             String?
+  status               UserStatus       @default(ACTIVE)
+  verified             Boolean          @default(false)
+  verified_at          DateTime?
+  created_at           DateTime         @default(now())
+  updated_at           DateTime         @updatedAt
+
+  users                User[]
+  farmers              FarmerProfile[]
+  suppliers            SupplierProfile[]
+  farmGroups           FarmGroup[]
+
+  @@index([type])
+  @@index([status])
+  @@map("organizations")
+}
+
+model FarmerProfile {
+  id                String        @id @default(uuid())
+  userId            String        @unique
+  organizationId    String?
+  farmer_code       String?       @unique
+  date_of_birth     DateTime?
+  gender            String?
+  id_type           String?
+  id_number         String?
+  primary_crops     String?       @db.LongText
+  years_farming     Int?
+  total_land_ha     Float?
+  has_smartphone    Boolean       @default(false)
+  primary_language  String?       @default("ENGLISH")
+  bank_verified     Boolean       @default(false)
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_farmer_profile_user")
+  organization      Organization? @relation(fields: [organizationId], references: [id], map: "fk_farmer_profile_org")
+
+  @@index([organizationId])
+  @@map("farmer_profiles")
+}
+
+model SupplierProfile {
+  id                 String        @id @default(uuid())
+  userId             String        @unique
+  organizationId     String?
+  supplier_code      String?       @unique
+  business_name      String
+  business_type      String?
+  registration_no    String?
+  tax_id             String?
+  product_categories String?       @db.LongText
+  delivery_regions   String?       @db.LongText
+  verified           Boolean       @default(false)
+  verified_at        DateTime?
+  created_at         DateTime      @default(now())
+  updated_at         DateTime      @updatedAt
+
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_supplier_profile_user")
+  organization       Organization? @relation(fields: [organizationId], references: [id], map: "fk_supplier_profile_org")
+  inventory          InputInventory[]
+  orders             InputOrder[]
+
+  @@index([organizationId])
+  @@map("supplier_profiles")
+}
+
+model UserPreferences {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  theme          String?  @default("light")
+  language       String?  @default("en")
+  timezone       String?  @default("Africa/Lagos")
+  email_enabled  Boolean  @default(true)
+  sms_enabled    Boolean  @default(false)
+  push_enabled   Boolean  @default(true)
+  weather_alerts Boolean  @default(true)
+  payment_alerts Boolean  @default(true)
+  updated_at     DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_user_preferences_user")
+
+  @@map("user_preferences")
+}
+
+// ============================================================
+// ADMIN INVITES
+// ============================================================
+
+model AdminInvite {
+  id                String           @id @default(uuid())
+  email             String
+  full_name         String
+  phone             String?
+  organizationName  String
+  organizationType  OrganizationType @default(AGGREGATOR)
+  token             String           @unique
+  status            InviteStatus     @default(PENDING)
+  invitedById       String
+  acceptedByUserId  String?          @unique
+  expiresAt         DateTime
+  acceptedAt        DateTime?
+  revokedAt         DateTime?
+  revokedById       String?
+  notes             String?          @db.Text
+  created_at        DateTime         @default(now())
+  updated_at        DateTime         @updatedAt
+
+  invitedBy         User             @relation("AdminInviteInvitedBy", fields: [invitedById], references: [id], map: "fk_admin_invite_invited_by")
+  acceptedBy        User?            @relation("AdminInviteAcceptedBy", fields: [acceptedByUserId], references: [id], map: "fk_admin_invite_accepted_by")
+
+  @@index([email])
+  @@index([status])
+  @@map("admin_invites")
+}
+
+// ============================================================
+// SUPPLIER APPLICATIONS
+// ============================================================
+
+model SupplierApplication {
+  id                   String            @id @default(uuid())
+  application_number   String            @unique
+  contact_full_name    String
+  contact_email        String
+  contact_phone        String
+  business_name        String
+  business_type        String?
+  registration_number  String?
+  tax_id               String?
+  country              String            @default("NIGERIA")
+  state                String?
+  city                 String?
+  address              String?           @db.Text
+  website              String?
+  product_categories   String?           @db.Text
+  delivery_regions     String?           @db.Text
+  years_in_business    Int?
+  description          String?           @db.Text
+  documents            Json?             @default("[]")
+  status               ApplicationStatus @default(SUBMITTED)
+  submittedAt          DateTime          @default(now())
+  reviewedById         String?
+  reviewedAt           DateTime?
+  decisionNotes        String?           @db.Text
+  rejectionReason      String?           @db.Text
+  moreInfoRequest      String?           @db.Text
+  moreInfoRespondedAt  DateTime?
+  approvedUserId       String?           @unique
+  ipAddress            String?
+  userAgent            String?
+  created_at           DateTime          @default(now())
+  updated_at           DateTime          @updatedAt
+
+  reviewedBy           User?             @relation("SupplierApplicationReviewedBy", fields: [reviewedById], references: [id], map: "fk_supplier_app_reviewed_by")
+  approvedUser         User?             @relation("SupplierApplicationApprovedUser", fields: [approvedUserId], references: [id], map: "fk_supplier_app_approved_user")
+
+  @@index([contact_email])
+  @@index([status])
+  @@map("supplier_applications")
+}
+
+// ============================================================
+// WALLET
+// ============================================================
+
+model Wallet {
+  id                String        @id @default(uuid())
+  userId            String
+  type              WalletType
+  accountNumber     String        @unique
+  accountName       String
+  bankName          String        @default("NAVSA")
+  currency          String        @default("NGN")
+
+  balance           Decimal       @default(0) @db.Decimal(18, 2)
+  ledgerBalance     Decimal       @default(0) @db.Decimal(18, 2)
+  availableBalance  Decimal       @default(0) @db.Decimal(18, 2)
+
+  status            WalletStatus  @default(ACTIVE)
+  isFrozen          Boolean       @default(false)
+  frozenAt          DateTime?
+  frozenReason      String?
+
+  kycLevel          Int           @default(1)
+  dailyLimit        Decimal       @default(0) @db.Decimal(18, 2)
+  monthlyLimit      Decimal       @default(0) @db.Decimal(18, 2)
+  singleTxnLimit    Decimal       @default(0) @db.Decimal(18, 2)
+
+  // PalmPay virtual account
+  palmPayCustomerId       String?   @unique
+  palmPayAccountNumber    String?   @unique
+  palmPayAccountName      String?
+  palmPayBankName         String?   @default("PalmPay")
+  palmPayBankCode         String?
+  palmPayAccountReference String?   @unique
+  palmPayStatus           String?   @default("PENDING")
+  palmPayCreatedAt        DateTime?
+  palmPayMetadata         Json?
+
+  metadata          Json?
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_wallet_user")
+  transactions      WalletTransaction[]
+  funding           WalletFunding[]
+  outgoingTransfers WalletTransfer[]     @relation("TransferFromWallet")
+  incomingTransfers WalletTransfer[]     @relation("TransferToWallet")
+  holds             WalletHold[]
+  inputOrdersPaid   InputOrder[]         @relation("InputOrderPaidFromWallet")
+  inputRequestsFunded InputRequest[]     @relation("InputRequestFundedFromWallet")
+  harvestPayouts    HarvestPayout[]
+  withdrawals       WalletWithdrawal[]
+  palmPayWebhookEvents PalmPayWebhookEvent[]
+
+  @@unique([userId, type])
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([accountNumber])
+  @@index([palmPayAccountNumber])
+  @@map("wallets")
+}
+
+model WalletFunding {
+  id                String                @id @default(uuid())
+  walletId          String
+  amount            Decimal               @db.Decimal(18, 2)
+  reference         String                @unique
+  source            WalletFundingSource   @default(BANK_TRANSFER)
+  status            WalletFundingStatus   @default(PENDING)
+
+  provider          String?
+  providerReference String?
+  providerPayload   Json?
+
+  initiatedById     String?
+  approvedById      String?
+  approvedAt        DateTime?
+
+  metadata          Json?
+  created_at        DateTime              @default(now())
+  completedAt       DateTime?
+
+  wallet            Wallet                @relation(fields: [walletId], references: [id], map: "fk_wallet_funding_wallet")
+  initiatedBy       User?                 @relation("WalletFundingInitiatedBy", fields: [initiatedById], references: [id], map: "fk_wallet_funding_initiator")
+  approvedBy        User?                 @relation("WalletFundingApprovedBy", fields: [approvedById], references: [id], map: "fk_wallet_funding_approver")
+  walletTransaction WalletTransaction?    @relation("FundingToTransaction")
+
+  @@index([walletId])
+  @@index([reference])
+  @@index([status])
+  @@index([source])
+  @@map("wallet_fundings")
+}
+
+model WalletTransaction {
+  id                String                  @id @default(uuid())
+  walletId          String
+  userId            String
+  type              WalletTransactionType
+  category          WalletCategory?
+  amount            Decimal                 @db.Decimal(18, 2)
+  fee               Decimal                 @default(0) @db.Decimal(18, 2)
+
+  balanceBefore     Decimal                 @db.Decimal(18, 2)
+  balanceAfter      Decimal                 @db.Decimal(18, 2)
+
+  reference         String                  @unique
+  description       String
+  status            WalletTransactionStatus @default(PENDING)
+
+  metadata          Json?
+  created_at        DateTime                @default(now())
+  completedAt       DateTime?
+
+  wallet            Wallet                  @relation(fields: [walletId], references: [id], map: "fk_wallet_tx_wallet")
+  user              User                    @relation(fields: [userId], references: [id], map: "fk_wallet_tx_user")
+
+  fundingId         String?                 @unique
+  funding           WalletFunding?          @relation("FundingToTransaction", fields: [fundingId], references: [id], map: "fk_wallet_tx_funding")
+
+  debitTransferId   String?                 @unique
+  creditTransferId  String?                 @unique
+  debitTransfer     WalletTransfer?         @relation("DebitTransfer", fields: [debitTransferId], references: [id], map: "fk_wallet_tx_debit_transfer")
+  creditTransfer    WalletTransfer?         @relation("CreditTransfer", fields: [creditTransferId], references: [id], map: "fk_wallet_tx_credit_transfer")
+
+  inputOrderId      String?                 @unique
+  inputOrder        InputOrder?             @relation("OrderToWalletTx", fields: [inputOrderId], references: [id], map: "fk_wallet_tx_input_order")
+
+  inputRequestId    String?                 @unique
+  inputRequest      InputRequest?           @relation("RequestToWalletTx", fields: [inputRequestId], references: [id], map: "fk_wallet_tx_input_request")
+
+  harvestPayoutId   String?                 @unique
+  harvestPayout     HarvestPayout?          @relation("PayoutToWalletTx", fields: [harvestPayoutId], references: [id], map: "fk_wallet_tx_harvest_payout")
+
+  withdrawalId      String?                 @unique
+  withdrawal        WalletWithdrawal?       @relation("WithdrawalToWalletTx", fields: [withdrawalId], references: [id], map: "fk_wallet_tx_withdrawal")
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([reference])
+  @@index([created_at])
+  @@index([category])
+  @@index([type, status])
+  @@map("wallet_transactions")
+}
+
+model WalletTransfer {
+  id                String                  @id @default(uuid())
+  fromWalletId      String
+  toWalletId        String
+  amount            Decimal                 @db.Decimal(18, 2)
+  fee               Decimal                 @default(0) @db.Decimal(18, 2)
+  totalDebited      Decimal                 @db.Decimal(18, 2)
+  reference         String                  @unique
+  description       String?
+  status            WalletTransactionStatus @default(PENDING)
+  metadata          Json?
+  created_at        DateTime                @default(now())
+  completedAt       DateTime?
+
+  fromWallet        Wallet                  @relation("TransferFromWallet", fields: [fromWalletId], references: [id], map: "fk_wallet_transfer_from")
+  toWallet          Wallet                  @relation("TransferToWallet",   fields: [toWalletId],   references: [id], map: "fk_wallet_transfer_to")
+
+  debitTransaction  WalletTransaction?      @relation("DebitTransfer")
+  creditTransaction WalletTransaction?      @relation("CreditTransfer")
+
+  @@index([fromWalletId])
+  @@index([toWalletId])
+  @@index([reference])
+  @@index([status])
+  @@map("wallet_transfers")
+}
+
+model WalletWithdrawal {
+  id                String                  @id @default(uuid())
+  walletId          String
+  bankAccountId     String?
+  amount            Decimal                 @db.Decimal(18, 2)
+  fee               Decimal                 @default(0) @db.Decimal(18, 2)
+  netAmount         Decimal                 @db.Decimal(18, 2)
+  reference         String                  @unique
+  status            WalletTransactionStatus @default(PENDING)
+  providerReference String?
+  failureReason     String?
+  metadata          Json?
+  created_at        DateTime                @default(now())
+  completedAt       DateTime?
+
+  wallet            Wallet                  @relation(fields: [walletId], references: [id], map: "fk_wallet_withdrawal_wallet")
+  walletTransaction WalletTransaction?      @relation("WithdrawalToWalletTx")
+
+  @@index([walletId])
+  @@index([reference])
+  @@index([status])
+  @@map("wallet_withdrawals")
+}
+
+model WalletHold {
+  id            String    @id @default(uuid())
+  walletId      String
+  amount        Decimal   @db.Decimal(18, 2)
+  reason        String
+  referenceType String
+  referenceId   String
+  expiresAt     DateTime
+  releasedAt    DateTime?
+  status        String    @default("ACTIVE")
+  created_at    DateTime  @default(now())
+
+  wallet        Wallet    @relation(fields: [walletId], references: [id], map: "fk_wallet_hold_wallet")
+
+  @@index([walletId])
+  @@index([status])
+  @@index([referenceType, referenceId])
+  @@map("wallet_holds")
+}
+
+// ============================================================
+// PALMPAY WEBHOOK EVENTS
+// ============================================================
+
+model PalmPayWebhookEvent {
+  id              String    @id @default(uuid())
+  eventId         String    @unique
+  eventType       String
+  reference       String?
+  accountNumber   String?
+  amount          Decimal?  @db.Decimal(18, 2)
+  currency        String?   @default("NGN")
+  payload         Json
+  signature       String?
+  signatureValid  Boolean   @default(false)
+  processed       Boolean   @default(false)
+  processedAt     DateTime?
+  errorMessage    String?
+
+  walletId        String?
+  walletFundingId String?
+
+  created_at      DateTime  @default(now())
+
+  wallet          Wallet?   @relation(fields: [walletId], references: [id], map: "fk_palmpay_event_wallet")
+
+  @@index([eventId])
+  @@index([reference])
+  @@index([accountNumber])
+  @@index([processed])
+  @@map("palmpay_webhook_events")
+}
+
+// ============================================================
+// HARVEST PAYOUT
+// ============================================================
+
+model HarvestPayout {
+  id                String                  @id @default(uuid())
+  harvestId         String?
+  cycleId           String?
+  farmId            String
+  farmerId          String
+  paidById          String
+
+  amount            Decimal                 @db.Decimal(18, 2)
+  currency          String                  @default("NGN")
+
+  toWalletId        String
+  status            WalletTransactionStatus @default(PENDING)
+  reference         String                  @unique
+  notes             String?
+  metadata          Json?
+
+  created_at        DateTime                @default(now())
+  completedAt       DateTime?
+
+  farmer            User                    @relation("PayoutFarmer", fields: [farmerId], references: [id], map: "fk_harvest_payout_farmer")
+  paidBy            User                    @relation("PayoutAdmin",  fields: [paidById],  references: [id], map: "fk_harvest_payout_admin")
+  toWallet          Wallet                  @relation(fields: [toWalletId], references: [id], map: "fk_harvest_payout_wallet")
+  walletTransaction WalletTransaction?      @relation("PayoutToWalletTx")
+
+  @@index([farmerId])
+  @@index([farmId])
+  @@index([status])
+  @@index([reference])
+  @@map("harvest_payouts")
+}
+
+model BankAccount {
+  id             String   @id @default(uuid())
+  userId         String
+  bank_name      String
+  bank_code      String?
+  account_name   String
+  account_number String
+  currency       String   @default("NGN")
+  is_verified    Boolean  @default(false)
+  is_primary     Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_bank_account_user")
+
+  @@unique([userId, account_number, bank_code])
+  @@map("bank_accounts")
+}
+
+// ============================================================
+// FARM MANAGEMENT
+// ============================================================
+
+model FarmGroup {
+  id               String        @id @default(uuid())
+  organizationId   String?
+  adminId          String?
+  name             String
+  description      String?
+  group_type       String
+  region           String?
+  local_government String?
+  village          String?
+  gps_boundary     String?       @db.LongText
+  total_area_ha    Float?
+  member_count     Int?          @default(0)
+  status           UserStatus    @default(ACTIVE)
+  created_at       DateTime      @default(now())
+  updated_at       DateTime      @updatedAt
+
+  organization     Organization? @relation(fields: [organizationId], references: [id], map: "fk_farm_group_org")
+  members          FarmGroupMember[]
+  farms            Farm[]
+
+  @@index([organizationId])
+  @@map("farm_groups")
+}
+
+model FarmGroupMember {
+  id                String    @id @default(uuid())
+  groupId           String
+  userId            String
+  role              String?
+  membership_status String    @default("ACTIVE")
+  joined_date       DateTime  @default(now())
+  exit_date         DateTime?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  group             FarmGroup @relation(fields: [groupId], references: [id], onDelete: Cascade, map: "fk_farm_group_member_group")
+  user              User      @relation(fields: [userId], references: [id], map: "fk_farm_group_member_user")
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("farm_group_members")
+}
+
+model Farm {
+  id                String      @id @default(uuid())
+  userId            String
+  groupId           String?
+  name              String
+  farm_type         String
+  latitude          Float?
+  longitude         Float?
+  gps_boundary      String?     @db.LongText
+  total_area_ha     Float
+  cultivable_ha     Float?
+  soil_type         String?
+  soil_ph           Float?
+  irrigation_type   String?
+  irrigation_source String?
+  status            String      @default("ACTIVE")
+  current_crop      String?
+  crop_variety      String?
+  planting_date     DateTime?
+  expected_harvest  DateTime?
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_farm_user")
+  group             FarmGroup?  @relation(fields: [groupId], references: [id], map: "fk_farm_group")
+  fields            FarmField[]
+  devices           IoTDevice[]
+  weatherStations   WeatherStation[]
+
+  @@index([userId])
+  @@index([groupId])
+  @@map("farms")
+}
+
+model FarmField {
+  id                String      @id @default(uuid())
+  farmId            String
+  name              String?
+  field_number      String
+  latitude          Float?
+  longitude         Float?
+  gps_boundary      String?     @db.LongText
+  area_ha           Float
+  soil_type         String?
+  soil_depth        Float?
+  status            String      @default("ACTIVE")
+  irrigation_method String?
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  farm              Farm        @relation(fields: [farmId], references: [id], onDelete: Cascade, map: "fk_farm_field_farm")
+  cropCycles        CropCycle[]
+  devices           IoTDevice[]
+
+  @@index([farmId])
+  @@map("farm_fields")
+}
+
+model CropCycle {
+  id               String      @id @default(uuid())
+  fieldId          String
+  cycle_number     Int
+  cycle_name       String?
+  crop_type        String
+  variety          String?
+  planting_date    DateTime
+  expected_harvest DateTime?
+  actual_harvest   DateTime?
+  status           CycleStatus @default(PLANTED)
+  seeds_used_kg    Float?
+  fertilizer_used  String?     @db.LongText
+  pesticides_used  String?     @db.LongText
+  total_yield_kg   Float?      @default(0)
+  yield_per_ha     Float?
+  total_cost       Float?      @default(0)
+  revenue          Float?      @default(0)
+  profit           Float?      @default(0)
+  created_at       DateTime    @default(now())
+  updated_at       DateTime    @updatedAt
+
+  field            FarmField   @relation(fields: [fieldId], references: [id], onDelete: Cascade, map: "fk_crop_cycle_field")
+  activities       CropActivity[]
+  harvests         Harvest[]
+  aiAdvice         AIAgronomyAdvice[]
+
+  @@index([fieldId, cycle_number])
+  @@index([status])
+  @@map("crop_cycles")
+}
+
+model CropActivity {
+  id               String           @id @default(uuid())
+  cycleId          String
+  activity_type    CropActivityType
+  activity_date    DateTime
+  performed_by     String?
+  details          String?          @db.LongText
+  water_volume     Float?
+  duration_hours   Float?
+  product_name     String?
+  product_quantity Float?
+  product_unit     String?
+  observations     String?
+  photos           String?          @db.LongText
+  total_cost       Float?           @default(0)
+  created_at       DateTime         @default(now())
+
+  cycle            CropCycle        @relation(fields: [cycleId], references: [id], onDelete: Cascade, map: "fk_crop_activity_cycle")
+
+  @@index([cycleId, activity_date])
+  @@map("crop_activities")
+}
+
+model Harvest {
+  id            String    @id @default(uuid())
+  cycleId       String
+  fieldId       String
+  farmId        String
+  harvest_date  DateTime
+  quantity      Float
+  unit          String    @default("KG")
+  quality_grade String?
+  moisture_pct  Float?
+  status        String    @default("RECORDED")
+  harvested_by  String?
+  verified_by   String?
+  verified_at   DateTime?
+  notes         String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  cycle         CropCycle @relation(fields: [cycleId], references: [id], map: "fk_harvest_cycle")
+
+  @@index([cycleId])
+  @@index([farmId, harvest_date])
+  @@map("harvests")
+}
+
+// ============================================================
+// IOT & WEATHER
+// ============================================================
+
+model IoTDevice {
+  id                String          @id @default(uuid())
+  farmId            String
+  fieldId           String?
+  userId            String?
+  device_type       IoTDeviceType
+  device_model      String?
+  manufacturer      String?
+  serial_number     String?         @unique
+  installed_date    DateTime
+  location_lat      Float?
+  location_lng      Float?
+  connection_type   String?
+  sim_card_number   String?
+  signal_strength   Int?
+  power_source      String?
+  battery_level     Int?
+  status            IoTDeviceStatus @default(ACTIVE)
+  reading_frequency Int?
+  last_reading      DateTime?
+  created_at        DateTime        @default(now())
+  updated_at        DateTime        @updatedAt
+
+  farm              Farm            @relation(fields: [farmId], references: [id], onDelete: Cascade, map: "fk_iot_device_farm")
+  field             FarmField?      @relation(fields: [fieldId], references: [id], map: "fk_iot_device_field")
+  user              User?           @relation(fields: [userId], references: [id], map: "fk_iot_device_user")
+
+  readings          IoTReading[]    @relation("DeviceReadings")
+  alerts            IoTAlert[]      @relation("DeviceAlerts")
+
+  actuator          IoTDeviceActuator?
+  actuatorCommands  IoTActuatorCommand[]
+
+  @@index([farmId])
+  @@index([device_type, status])
+  @@map("iot_devices")
+}
+
+model IoTReading {
+  id              String    @id @default(uuid())
+  deviceId        String
+  reading_time    DateTime  @default(now())
+  reading_type    String
+  reading_value   Float
+  unit            String
+  sensor_index    Int?
+  sensor_depth    Float?
+  reading_quality String?
+  is_calibrated   Boolean   @default(true)
+  raw_data        String?   @db.LongText
+  created_at      DateTime  @default(now())
+
+  device          IoTDevice @relation("DeviceReadings", fields: [deviceId], references: [id], onDelete: Cascade, map: "fk_iot_reading_device")
+
+  @@index([deviceId, reading_time])
+  @@index([reading_type])
+  @@map("iot_readings")
+}
+
+model IoTAlert {
+  id                String    @id @default(uuid())
+  deviceId          String
+  alert_type        String
+  severity          String
+  threshold_min     Float?
+  threshold_max     Float?
+  actual_value      Float
+  detected_at       DateTime  @default(now())
+  resolved_at       DateTime?
+  status            String    @default("ACTIVE")
+  notification_sent Boolean   @default(false)
+  farm_id           String?
+  field_id          String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  device            IoTDevice @relation("DeviceAlerts", fields: [deviceId], references: [id], onDelete: Cascade, map: "fk_iot_alert_device")
+
+  @@index([deviceId, status])
+  @@map("iot_alerts")
+}
+
+// ============================================================
+// ACTUATOR CONFIG (1:1 with IoTDevice when device is an actuator)
+// ============================================================
+
+model IoTDeviceActuator {
+  id              String        @id @default(uuid())
+  deviceId        String        @unique
+
+  // Control mode + current state
+  mode            ActuatorMode  @default(MANUAL)
+  state           ActuatorState @default(OFF)
+  lastStateChange DateTime?
+  lastChangedBy   String?
+
+  // AUTO rule — pair of thresholds on a chosen reading type
+  triggerType     String?       // e.g. "SOIL_MOISTURE", "TEMPERATURE", "HUMIDITY", "RAINFALL"
+  triggerUnit     String?       // e.g. "%", "°C"
+  onBelow         Float?        // turn ON when reading < onBelow
+  offAbove        Float?        // turn OFF when reading > offAbove
+
+  // Safety
+  maxRunMinutes   Int?          // auto-off after this many minutes regardless
+  cooldownMinutes Int?          // min gap between ON cycles
+
+  // Runtime accounting
+  totalRuntimeMinutes Int       @default(0)
+  lastRunStartedAt    DateTime?
+
+  // Metadata
+  metadata        Json?
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  device          IoTDevice     @relation(fields: [deviceId], references: [id], onDelete: Cascade, map: "fk_actuator_device")
+
+  @@index([mode])
+  @@index([state])
+  @@map("iot_device_actuators")
+}
+
+// ============================================================
+// ACTUATOR COMMAND LOG
+// ============================================================
+
+model IoTActuatorCommand {
+  id           String                @id @default(uuid())
+  deviceId     String
+  action       ActuatorState
+  source       ActuatorCommandSource @default(MANUAL)
+  triggeredBy  String?
+  reason       String?               @db.Text
+  readingValue Float?
+  readingType  String?
+  success      Boolean               @default(true)
+  errorMessage String?               @db.Text
+  created_at   DateTime              @default(now())
+
+  device       IoTDevice             @relation(fields: [deviceId], references: [id], onDelete: Cascade, map: "fk_actuator_cmd_device")
+  triggeredByUser User?              @relation(fields: [triggeredBy], references: [id], map: "fk_actuator_cmd_user")
+
+  @@index([deviceId, created_at])
+  @@index([source])
+  @@map("iot_actuator_commands")
+}
+
+model WeatherStation {
+  id           String           @id @default(uuid())
+  farmId       String
+  station_code String           @unique
+  name         String
+  latitude     Float?
+  longitude    Float?
+  elevation    Float?
+  provider     String?
+  status       String           @default("ACTIVE")
+  created_at   DateTime         @default(now())
+  updated_at   DateTime         @updatedAt
+
+  farm         Farm             @relation(fields: [farmId], references: [id], onDelete: Cascade, map: "fk_weather_station_farm")
+  readings     WeatherReading[]
+
+  @@index([farmId])
+  @@map("weather_stations")
+}
+
+model WeatherReading {
+  id              String         @id @default(uuid())
+  stationId       String
+  reading_time    DateTime       @default(now())
+  temperature_c   Float?
+  humidity_pct    Float?
+  rainfall_mm     Float?
+  wind_speed_kmh  Float?
+  wind_direction  String?
+  pressure_hpa    Float?
+  solar_radiation Float?
+  uv_index        Float?
+  forecast_3day   String?        @db.LongText
+  forecast_7day   String?        @db.LongText
+  source          String?        @default("STATION")
+  created_at      DateTime       @default(now())
+
+  station         WeatherStation @relation(fields: [stationId], references: [id], onDelete: Cascade, map: "fk_weather_reading_station")
+
+  @@index([stationId, reading_time])
+  @@map("weather_readings")
+}
+
+// ============================================================
+// AI AGRONOMY
+// ============================================================
+
+model AIAgronomyAdvice {
+  id               String       @id @default(uuid())
+  userId           String?
+  farmId           String?
+  fieldId          String?
+  cycleId          String?
+  advice_type      AIAdviceType
+  crop_type        String?
+  prompt           String?      @db.LongText
+  context          String?      @db.LongText
+  advice_text      String       @db.LongText
+  confidence_score Float?
+  model_used       String?      @default("gemini")
+  weather_snapshot String?      @db.LongText
+  sensor_snapshot  String?      @db.LongText
+  action_items     String?      @db.LongText
+  is_actioned      Boolean      @default(false)
+  actioned_at      DateTime?
+  created_at       DateTime     @default(now())
+
+  user             User?        @relation(fields: [userId], references: [id], map: "fk_ai_advice_user")
+  cycle            CropCycle?   @relation(fields: [cycleId], references: [id], map: "fk_ai_advice_cycle")
+
+  @@index([userId])
+  @@index([cycleId])
+  @@map("ai_agronomy_advice")
+}
+
+// ============================================================
+// INPUT SUPPLY CHAIN
+// ============================================================
+
+model InputInventory {
+  id                   String          @id @default(uuid())
+  supplierId           String
+  item_type            String
+  item_name            String
+  item_code            String?         @unique
+  description          String?
+  manufacturer         String?
+  unit_type            String
+  unit_cost            Float?
+  currency             String          @default("NGN")
+  current_stock        Float           @default(0)
+  min_stock            Float?
+  reorder_point        Float?
+  storage_requirements String?         @db.LongText
+  category             String?
+  is_active            Boolean         @default(true)
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @updatedAt
+
+  supplier             SupplierProfile @relation(fields: [supplierId], references: [id], map: "fk_input_inventory_supplier")
+  requestItems         InputRequestItem[]
+
+  @@index([item_type])
+  @@index([category])
+  @@index([supplierId])
+  @@map("input_inventory")
+}
+
+model InputRequest {
+  id                 String             @id @default(uuid())
+  request_number     String             @unique
+  farmerId           String
+  farmId             String?
+  cycleId            String?
+  status             InputRequestStatus @default(PENDING)
+  requested_date     DateTime           @default(now())
+  needed_by_date     DateTime?
+  total_amount       Float
+  currency           String             @default("NGN")
+  notes              String?            @db.Text
+  approved_by_id     String?
+  approved_at        DateTime?
+  rejection_reason   String?
+  funded_by_id       String?
+  funded_at          DateTime?
+  funded_amount      Float?
+  fundedFromWalletId String?
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
+
+  farmer             User               @relation("InputRequestFarmer", fields: [farmerId], references: [id], map: "fk_input_request_farmer")
+  approvedBy         User?              @relation("InputRequestApprover", fields: [approved_by_id], references: [id], map: "fk_input_request_approver")
+  fundedBy           User?              @relation("InputRequestFunder", fields: [funded_by_id], references: [id], map: "fk_input_request_funder")
+  fundedFromWallet   Wallet?            @relation("InputRequestFundedFromWallet", fields: [fundedFromWalletId], references: [id], map: "fk_input_request_wallet")
+  walletTransaction  WalletTransaction? @relation("RequestToWalletTx")
+
+  items              InputRequestItem[]
+  orders             InputOrder[]
+
+  @@index([farmerId])
+  @@index([status])
+  @@map("input_requests")
+}
+
+model InputRequestItem {
+  id          String          @id @default(uuid())
+  requestId   String
+  inventoryId String?
+  item_name   String
+  item_type   String
+  quantity    Float
+  unit        String
+  unit_price  Float?
+  total_price Float?
+  notes       String?
+  created_at  DateTime        @default(now())
+
+  request     InputRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade, map: "fk_input_request_item_request")
+  inventory   InputInventory? @relation(fields: [inventoryId], references: [id], map: "fk_input_request_item_inventory")
+
+  @@index([requestId])
+  @@map("input_request_items")
+}
+
+model InputOrder {
+  id                String            @id @default(uuid())
+  order_number      String            @unique
+  requestId         String
+  farmerId          String
+  supplierId        String
+  status            InputOrderStatus @default(PENDING)
+  ordered_date      DateTime          @default(now())
+  expected_delivery DateTime?
+  delivered_at      DateTime?
+  total_amount      Float
+  currency          String            @default("NGN")
+  delivery_address  String?           @db.Text
+  delivery_lat      Float?
+  delivery_lng      Float?
+  tracking_number   String?
+  delivered_by_id   String?
+  notes             String?           @db.Text
+  paidFromWalletId  String?
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+
+  request           InputRequest      @relation(fields: [requestId], references: [id], map: "fk_input_order_request")
+  farmer            User              @relation("InputOrderFarmer", fields: [farmerId], references: [id], map: "fk_input_order_farmer")
+  supplier          SupplierProfile   @relation(fields: [supplierId], references: [id], map: "fk_input_order_supplier")
+  deliveredBy       User?             @relation("InputOrderDeliverer", fields: [delivered_by_id], references: [id], map: "fk_input_order_deliverer")
+  paidFromWallet    Wallet?           @relation("InputOrderPaidFromWallet", fields: [paidFromWalletId], references: [id], map: "fk_input_order_wallet")
+  walletTransaction WalletTransaction? @relation("OrderToWalletTx")
+  statusHistory     InputOrderStatusHistory[]
+
+  @@index([farmerId])
+  @@index([supplierId])
+  @@index([status])
+  @@map("input_orders")
+}
+
+model InputOrderStatusHistory {
+  id          String     @id @default(uuid())
+  orderId     String
+  from_status String?
+  to_status   String
+  changed_by  String?
+  reason      String?
+  changed_at  DateTime   @default(now())
+
+  order       InputOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "fk_input_order_status_order")
+
+  @@index([orderId])
+  @@map("input_order_status_history")
+}
+
+// ============================================================
+// NOTIFICATIONS & AUDIT
+// ============================================================
+
+model Notification {
+  id             String    @id @default(uuid())
+  userId         String
+  title          String
+  body           String    @db.Text
+  type           String
+  reference_type String?
+  reference_id   String?
+  is_read        Boolean   @default(false)
+  read_at        DateTime?
+  created_at     DateTime  @default(now())
+
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_notification_user")
+
+  @@index([userId, is_read])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  userId        String?
+  action        String
+  entity_type   String
+  entity_id     String?
+  old_values    String?  @db.LongText
+  new_values    String?  @db.LongText
+  ip_address    String?
+  user_agent    String?
+  success       Boolean  @default(true)
+  error_message String?
+  created_at    DateTime @default(now())
+
+  user          User?    @relation(fields: [userId], references: [id], map: "fk_audit_log_user")
+
+  @@index([userId])
+  @@index([entity_type, entity_id])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  id            String   @id @default(uuid())
+  setting_key   String   @unique
+  setting_value String   @db.Text
+  description   String?
+  data_type     String   @default("string")
+  group         String?
+  is_editable   Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@index([group])
+  @@map("system_settings")
+}
