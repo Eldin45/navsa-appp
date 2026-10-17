@@ -1,14 +1,17 @@
-import { SYSTEM_CONFIG } from "~/app";
-import { getCurrentUserOrRedirect } from "~/lib/auth1";
-
-import { SignInPageClient } from "./page.client";
+// src/app/page.tsx
+import { redirect } from "next/navigation";
+import { getCurrentUser, resolveDashboardForRole } from "~/lib/session";
+import LoginPage from "./page.client";
 
 export default async function SignInPage() {
-  await getCurrentUserOrRedirect(
-    undefined,
-    SYSTEM_CONFIG.redirectAfterSignIn,
-    true,
-  );
+  const user = await getCurrentUser();
 
-  return <SignInPageClient />;
+  if (user) {
+    if (user.status === "PENDING_VERIFICATION") {
+      redirect("/pending-verification");
+    }
+    redirect(resolveDashboardForRole(user.role));
+  }
+
+  return <LoginPage />;
 }

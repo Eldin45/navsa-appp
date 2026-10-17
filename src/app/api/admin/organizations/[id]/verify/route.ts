@@ -1,10 +1,13 @@
 // src/app/api/admin/organizations/[id]/verify/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "~/lib/session";
-import {
-  verifyOrganization,
-  verifyOrganizationSchema,
-} from "~/lib/services/organization.service";
+// import {
+//   verifyOrganization,
+//   verifyOrganizationSchema,
+// } from "~/lib/services/organization.service";
+
+import { verifyOrganization, verifyOrganizationSchema} from "~/lib/services/organisation.service";
+
 
 export async function POST(
   req: NextRequest,
